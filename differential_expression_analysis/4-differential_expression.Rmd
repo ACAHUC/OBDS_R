@@ -374,6 +374,15 @@ What do we need to do to our data???
 ```{r}
 
 # do we need to remove/edit samples? 
+dds_filtered_updated <- dds_filtered[,1:6] 
+colnames(dds_filtered_updated)
+dds <- DESeq(dds_filtered_updated)
+
+#there is no difference in the genotype so I need to change the desig only with celltype.
+design(dds_filtered_updated) <- ~cell_type
+
+#then run the DESeq again
+
 
 # do we want to update the design? Is this nessecary in this case?
 # e.g. design(dds) <- ~replicate + condition
@@ -389,34 +398,52 @@ What do we need to do to our data???
 
 ```{r}
 # Calculate the size factors for each sample using estimateSizeFactors()
+dds_filtered_updated <- estimateSizeFactors(dds_filtered_updated)
+colData(dds_filtered_updated)
 
 # Access the size factors from the dds_filtered_updated object
+sizefactor <- sizeFactors(dds_filtered_updated)
+sizefactor
 
 # Do you see any systematic differences in size factors between groups?
+No
 
 ```
 
 # Optional: Plot size factors as barchart using ggplot
 ```{r}
+sizefactor_dataframe <- data.frame(sizefactor)%>%
+  rownames_to_column("sample_id")
+
+ggplot(sizefactor_dataframe, aes(x=sample_id,y=sizefactor, fill=cell_type))+
+  geom_col()
+
+dds_filtered_updated_dataframe <- data.frame(colData(dds_filtered_updated)) %>%
+  rownames_to_column("sample_id")
+
+ggplot(dds_filtered_updated_dataframe, aes(x=sample_id,y=sizefactor, fill=cell_type))+
+  geom_col()
 ```
 
 ## Get counts table normalised using size factors
 
 ```{r}
 # get counts table normalised using size factors - call it normalized_counts
-
+normalized_counts <- counts(dds_filtered_updated, normalized=TRUE)
 
 # check the class of the output
-
+class(normalized_counts)
 ```
 
 # 3. Estimate dispersions for each gene
 
 ```{r}
 # Obtain dispersion estimates for each gene using estimateDispersions() 
-
+#we are doing this agin on the dds object
+dds_filtered_updated <- estimateDispersions(dds_filtered_updated)
+colData(dds_filtered_updated)
 # Plot the per-gene dispersion estimates (DESeq2 has a helper function for this)
-
+plotDispEsts(dds_filtered_updated)
 ```
 
 
@@ -424,7 +451,9 @@ What do we need to do to our data???
 
 ```{r}
 # Tests for significance of coefficients in a negative binomial GLM, using previously calculated size factors and dispersion estimates and WaldTest
-
+WaldTest <- nbinomWaldTest(dds_filtered_updated)
+results(WaldTest)
+summary(results(WaldTest))
 ```
 
 
@@ -432,14 +461,39 @@ What do we need to do to our data???
 
 ```{r}
 # generate dds object 
+featurecounts_table <- read_tsv("/cloud/project/data/differential_expression/allsamples_counts.tsv.gz", comment = "#")
+
+counts_table <- featurecounts_table %>%
+                  column_to_rownames("Geneid") %>%
+                  dplyr::select(starts_with("ERR") & ends_with(".bam")) %>%
+                  as.matrix()
+
+counts_table
+
+sample_info <- read_tsv("/cloud/project/data/differential_expression/PRJEB18572_sample_info_subset.tsv") %>%
+  column_to_rownames("sample_id")
+
+sample_info$cell_type <- factor(sample_info$cell_type, levels=c("CD4", "CD8"))
+sample_info$genotype <- factor(sample_info$genotype)
+  
+sample_info
 
 # filter rows with 0 counts 
+dds_filtered <- dds[rowSums(counts(dds)) > 0,]
 
 # remove unwanted samples 
+dds_filtered_updated <- dds_filtered[,1:6]
 
 # make DESeqDataSet (dds) object 
+dds <- DESeqDataSetFromMatrix(countData = counts_table,
+                              colData = sample_info,
+                              design = ~cell_type )
+
 
 # run DESeq() 
+design(dds_filtered_updated) <- ~cell_type
+dds <- DESeq(dds_filtered_updated)
+
 
 ```
 
@@ -447,8 +501,8 @@ What do we need to do to our data???
 
 ```{r}
 # What do the results() and summary() do, what arguments can you specify? 
-
-
+results_obj <- results(dds)
+summary(results_obj)
 ```
 
 # Optional - if we have time: Access the coefficients of the Negative Binomnial GLM – see vingette("DESeq2")
@@ -462,7 +516,8 @@ What do we need to do to our data???
  
 ```{r}
 # Plot normalised counts for gene ENSMUSG00000041779
-
+# Plot normalised counts for gene ENSMUSG00000041779
+plotCounts(dds_filtered_updated, gene = "ENSMUSG00000041779", intgroup = "cell_type", normalized = TRUE)
 ```
 
 # Access the results table for the comparison between CD8 and CD4 T cells . Youu can also try to CD4 vs CD8 (i.e. switch the reference) - you could also try this for replicate 1 vs replicate 3 as a control 
@@ -470,7 +525,12 @@ What do we need to do to our data???
 checkout `resultsNames()`  & `results()`
 
 ```{r}
+resultsNames(dds)
 
+A1 <- results(dds, contrast = c("cell_type","CD8", "CD4"))
+A1
+A2 <- results(dds, contrast = c("cell_type","CD4", "CD8"))
+A2
 ```
 
 Table should contain log2 fold changes and p-values for all genes
@@ -478,6 +538,11 @@ Table should contain log2 fold changes and p-values for all genes
 # Plot a histogram of the raw and BH-adjusted p-values using ggplot – do they look as expected? for CD8 vs CD4
 
 ```{r}
+CD8vsCD4 <- as.data.frame(A1)
+  
+ggplot(CD8vsCD4)+
+  geom_histogram(aes(x=pvalue), fill="blue")+
+  geom_histogram(aes(x=padj), fill="green", alpha=0.5)
 
 ```
 
@@ -485,7 +550,7 @@ Table should contain log2 fold changes and p-values for all genes
 # Generate an MA plot of the log2 FC values for all genes using DESeq2 plotMA()
 
 ```{r}
-
+MAplot_dds <- plotMA(dds_filtered_updated)
 
 ```
 
@@ -494,7 +559,12 @@ Table should contain log2 fold changes and p-values for all genes
 ```{r}
 
 # call your results table  called shrunkenLFC_dds_results_obj
+shrunkenLFC_dds_results_obj_n <- lfcShrink(dds_filtered_updated,coef=2, type = "normal" )
+MAplot_dds <- plotMA(shrunkenLFC_dds_results_obj_n)
 
+
+shrunkenLFC_dds_results_obj_ap <- lfcShrink(dds_filtered_updated,coef=2, type = "apeglm" )
+MAplot_dds <- plotMA(shrunkenLFC_dds_results_obj_ap)
 ```
 
 
@@ -503,16 +573,25 @@ Table should contain log2 fold changes and p-values for all genes
 ```{r}
 
 # convert shrunkenLFC_dds_results_obj to a dataframe and call it shrunkenLFC_dds_results_df
+shrunkenLFC_dds_results_df <- as.data.frame(shrunkenLFC_dds_results_obj_n) %>%
+  rownames_to_column("ENSEMBL")
 
-# Use the org.Mm.eg.db package to get gene symbols for the ensembl gene ids (hint:you did this on bioconductor day) 
+# Use the org.Mm.eg.db package to get gene symbols for the ensembl gene ids (hint:you did this on bioconductor day)
+gene_symbol <- AnnotationDbi::select(org.Mm.eg.db, keys = shrunkenLFC_dds_results_df$ENSEMBL, keytype = "ENSEMBL", columns = "SYMBOL")
+
+#alternate
+shrunkenLFC_dds_results_df$symbols <- mapIds(org.Mm.eg.db, keys = shrunkenLFC_dds_results_df$ENSEMBL, keytype = "ENSEMBL", column = "SYMBOL")
 
 # How many Ensembl IDs are not assigned an gene symbol and how many gene symbols are duplicated?
-
-
+sum(is.na(symbols)) # Number of missing gene symbols
+length(symbols[which(!is.na(symbols))]) - length(unique(symbols[which(!is.na(symbols))])) # Number of duplicated gene symbols
+#alternate
+sum(duplicated(symbols[which(!is.na(symbols))])) # Number of duplicated gene symbols
 
 keytypes(org.Mm.eg.db)      #to remind us of what keytypes are in this particular db
 
 # use mapIds() to get 1:1 mapping for SYMBOL, ENTREZ and MGI
+
 
 # add mapId vectors to  shrunkenLFC_dds_results_df
 ```
