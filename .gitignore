@@ -1,2 +1,6 @@
 # This file list file patterns to ignore from version control
-
+*.rds
+*.bed
+*.pdf
+df_var
+*.html
